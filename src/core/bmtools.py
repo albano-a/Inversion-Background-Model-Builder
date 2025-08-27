@@ -24,7 +24,7 @@ def open_segyio_cube(filepath, iline=189, xline=193):
     return vel
 
 
-def create_welldata_matrix(folder: str) -> pd.DataFrame:
+def create_welldata_dataframe(folder: str) -> pd.DataFrame:
     """This function generates the data matrix for the wells
 
     Args:
@@ -86,12 +86,13 @@ def create_welldata_matrix(folder: str) -> pd.DataFrame:
     return pd.concat(well_data.values(), ignore_index=True)
 
 
-def create_wellposition_matrix(dataframe, time):
+def stacked_wells_matrix(pathf: str, sample: float):
     """
     Considere uma matriz com os poços empilhados um por linha contendo o mesmo tamanho e amostrado
     na mesma dimensão do modelo,
     ou seja: (nwells, nsamples)
     """
+    dataframe = create_welldata_dataframe(folder=pathf)
     log_well = np.zeros(shape=(16, 600))  # Hardcoded
     i = 0
     dataframe["IP_ups"] = dataframe["IP"]
@@ -101,10 +102,94 @@ def create_wellposition_matrix(dataframe, time):
             np.ones(30) / 30, dataframe[mask].IP, mode="same"
         )
         interpolator = interp1d(
-            dataframe[mask].TWT, dataframe[mask].IP_ups, bounds_error=False, fill_value='extrapolate'
+            dataframe[mask].TWT,
+            dataframe[mask].IP_ups,
+            bounds_error=False,
+            fill_value="extrapolate",
         )
-        log_well[i,:] = interpolator(time)
+        log_well[i, :] = interpolator(sample)
         i += 1
+
+    return log_well
+
+
+# def position_wells_matrix(dataframe: pd.DataFrame, well_positions: np.ndarray):
+#     well_names = np.array(dataframe.Well.unique())
+
+
+def run_background_modelling(
+    horizons: np.ndarray,
+    log_well,
+    well_positions,
+    samples,
+    velocity_flat,
+    smooth_model=False,
+):
+    M = BMTools()
+    M.build_rgt(surfaces=horizons, time=samples, silence=False)
+    model_shape = M.rgt.shape
+    # Here the model is already plottable with
+    # plt.imshow(M.rgt[813].T)
+
+    # Variogram
+    variogram = gs.Spherical(dim=2, len_scale=200, var=np.nanvar(log_well))
+    angle = -np.pi / 8  # (-22.5)
+    variogram = gs.Gaussian(
+        dim=2, len_scale=[200, 100], angles=angle, var=np.nanvar(log_well)
+    )
+
+    # Interpolation
+    # velocity_flat is the file np.load('Velocity_Model_Time_FLAT.npy')
+    M.interpol(
+        variogram,
+        log_well,
+        relative_well_loc=well_positions,
+        fill_value=(3000, 6000),
+        silence=False,
+        decimate=40,
+        second_var=velocity_flat,
+    )
+
+    """
+    mapa = np.zeros_like(hrz_base140_grid)
+    for i in range(hrz_base140_grid.shape[0]):
+        for j in range(hrz_base140_grid.shape[1]):
+            z = int((hrz_base140_grid[i, j] - 1700)//4)
+            #mapa[i, j] = M.krig[i,j,z]
+            mapa[i,j] = velocity[i,j,z]
+    """
+
+    if smooth_model == True:
+        M.smooth_model(cut_hz=50, silence=False)
+
+    """
+    The plotting happens using M.model[:,:,250] (TIME-SLICE)
+    """
+
+
+def unnamed_function(
+    positions: dict, xcoords, ycoords, il, xl, bin_half=6.5, scale=100
+):
+    mat = []
+    for pos in positions.values():
+        x, y = pos["X"], pos["Y"]
+
+        x_scaled = x / scale
+        y_scaled = y / scale
+
+        ix = np.where(
+            (xcoords / scale >= x - bin_half) & (xcoords / scale <= x + bin_half)
+        )[0][0]
+        iy = np.where(
+            (ycoords / scale >= y - bin_half) & (ycoords / scale <= y + bin_half)
+        )[0][0]
+
+        il_well = il[ix]
+        xl_well = xl[iy]
+
+        mat.append([il_well, xl_well])
+
+    return np.array(mat, dtype=int)
 
 
 def find_normalized_thickness(surfs, loc):
