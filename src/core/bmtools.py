@@ -125,22 +125,30 @@ def read_horizon(path):
 
 
 def grid_surface_as_seismic(df, il=None, xl=None, method="linear"):
-    x, y, z = df[["IL", "XL", "TWT"]].dropna().values.T
-    mask = ~np.isnan(x) & ~np.isnan(y) & ~np.isnan(z)
-    x, y, z = x[mask], y[mask], z[mask]
-
-    if il is None:
-        il = np.arange(int(x.min()), int(x.max()) + 1)
-    if xl is None:
-        xl = np.arange(int(y.min()), int(y.max()) + 1)
-
-    xx, yy = np.meshgrid(il, xl)
-    xi = np.column_stack((xx.ravel(), yy.ravel()))
-    grid = griddata((x, y), z, xi, method=method, fill_value=np.mean(z)).reshape(
-        xx.shape
+    il_coords, xl_coords, t_val = df[["IL", "XL", "TWT"]].dropna().values.T
+    mask = ~np.isnan(il_coords) & ~np.isnan(xl_coords) & ~np.isnan(t_val)
+    il_coords, xl_coords, t_val = (
+        il_coords[mask],
+        xl_coords[mask],
+        t_val[mask],
     )
 
-    return grid.T
+    if il is None:
+        il = np.arange(int(il_coords.min()), int(il_coords.max()) + 1)
+    if xl is None:
+        xl = np.arange(int(xl_coords.min()), int(xl_coords.max()) + 1)
+
+    il_grid, xl_grid = np.meshgrid(il, xl)
+    grid_points = np.column_stack((il_grid.ravel(), xl_grid.ravel()))
+    interpolated_grid = griddata(
+        (il_coords, xl_coords),
+        t_val,
+        grid_points,
+        method=method,
+        fill_value=np.mean(t_val),
+    ).reshape(il_grid.shape)
+
+    return interpolated_grid.T
 
 
 def load_and_grid(path, il=None, xl=None, method="linear"):
