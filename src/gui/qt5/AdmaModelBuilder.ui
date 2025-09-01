@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>736</width>
-    <height>856</height>
+    <height>824</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -100,7 +100,7 @@
                  <item row="2" column="0" colspan="3">
                   <widget class="QTableWidget" name="mbwWellTableWidget">
                    <attribute name="horizontalHeaderDefaultSectionSize">
-                    <number>200</number>
+                    <number>100</number>
                    </attribute>
                    <attribute name="horizontalHeaderStretchLastSection">
                     <bool>true</bool>
@@ -112,7 +112,17 @@
                    </column>
                    <column>
                     <property name="text">
-                     <string>Weight</string>
+                     <string>X</string>
+                    </property>
+                   </column>
+                   <column>
+                    <property name="text">
+                     <string>Y</string>
+                    </property>
+                   </column>
+                   <column>
+                    <property name="text">
+                     <string>Weight*</string>
                     </property>
                    </column>
                    <column>
@@ -273,17 +283,17 @@
                    </attribute>
                    <column>
                     <property name="text">
-                     <string>Top Horizon</string>
+                     <string>Horizons</string>
                     </property>
                    </column>
                    <column>
                     <property name="text">
-                     <string>Bottom Horizon</string>
+                     <string>Top</string>
                     </property>
                    </column>
                    <column>
                     <property name="text">
-                     <string>Depositional mode</string>
+                     <string>Bottom</string>
                     </property>
                    </column>
                   </widget>

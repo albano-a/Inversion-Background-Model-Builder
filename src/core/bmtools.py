@@ -117,6 +117,38 @@ def stacked_wells_matrix(pathf: str, sample: float):
 #     well_names = np.array(dataframe.Well.unique())
 
 
+def read_horizon(path):
+    df = pd.read_csv(
+        path, sep=r"\s+", usecols=(2, 5, 8), names=["IL", "XL", "TWT"]
+    ).sort_values(by=["IL", "XL"])
+    return df
+
+
+def grid_surface_as_seismic(df, il=None, xl=None, method="linear"):
+    x, y, z = df[["IL", "XL", "TWT"]].dropna().values.T
+    mask = ~np.isnan(x) & ~np.isnan(y) & ~np.isnan(z)
+    x, y, z = x[mask], y[mask], z[mask]
+
+    if il is None:
+        il = np.arange(int(x.min()), int(x.max()) + 1)
+    if xl is None:
+        xl = np.arange(int(y.min()), int(y.max()) + 1)
+
+    xx, yy = np.meshgrid(il, xl)
+    xi = np.column_stack((xx.ravel(), yy.ravel()))
+    grid = griddata((x, y), z, xi, method=method, fill_value=np.mean(z)).reshape(
+        xx.shape
+    )
+
+    return grid.T
+
+
+def load_and_grid(path, il=None, xl=None, method="linear"):
+    df = read_horizon(path)
+    grid = grid_surface_as_seismic(df, il, xl, method=method)
+    return grid
+
+
 def run_background_modelling(
     horizons: np.ndarray,
     log_well,
@@ -125,6 +157,31 @@ def run_background_modelling(
     velocity_flat,
     smooth_model=False,
 ):
+    """
+    Runs background modeling pipeline for seismic inversion using horizons and well log data.
+    This function builds a relative geological time (RGT) model from input horizons,
+    performs kriging interpolation using well log data and velocity information, and
+    optionally applies smoothing to the resulting model.
+    Args:
+        horizons (np.ndarray): Array of horizon surfaces used to build the RGT model.
+        log_well: Well log data used as primary variable for interpolation.
+        well_positions: Spatial positions/coordinates of the wells relative to the model grid.
+        samples: Time samples used in RGT construction.
+        velocity_flat (np.ndarray): Flattened velocity model used as secondary variable
+            in co-kriging interpolation.
+        smooth_model (bool, optional): If True, applies smoothing to the final model
+            with a 50Hz cutoff. Defaults to False.
+    Returns:
+        BMTools: Configured BMTools object containing the built model accessible via
+            M.model[:,:,time_slice] for visualization and further processing.
+    Notes:
+        - The function uses a Gaussian variogram with anisotropic correlation lengths
+          (200, 100) and rotation angle of -π/8 (-22.5 degrees).
+        - Interpolation uses co-kriging with velocity as secondary variable and
+          decimation factor of 40.
+        - Fill values are set to (3000, 6000) for extrapolation outside data range.
+        - The resulting model can be visualized using time slices: M.model[:,:,slice_index].
+    """
     M = BMTools()
     M.build_rgt(surfaces=horizons, time=samples, silence=False)
     model_shape = M.rgt.shape
@@ -167,9 +224,19 @@ def run_background_modelling(
     """
 
 
-def unnamed_function(
+def convert_well_positions_to_seismic_grid(
     positions: dict, xcoords, ycoords, il, xl, bin_half=6.5, scale=100
 ):
+    """
+    This function will create the array of positions from the wells in inline and crossline
+
+    xcoords and ycoords are arrays that come from the seismic data
+    positions is a dictionary contatining the name of the well and the well head position X and Y
+    scale is the multiplication factor of specifically ABL, contains on SEGY
+     Half-bin tolerance for position matching. Default is 6.5.
+
+    """
+
     mat = []
     for pos in positions.values():
         x, y = pos["X"], pos["Y"]
@@ -190,6 +257,13 @@ def unnamed_function(
         mat.append([il_well, xl_well])
 
     return np.array(mat, dtype=int)
+
+
+def relative_well_position(positions, inline, xline):
+    relative_well_pos = positions.copy()
+    relative_well_pos[:, 0] = relative_well_pos[:, 0] - inline.min()
+    relative_well_pos[:, 1] = relative_well_pos[:, 1] - xline.min()
+    return relative_well_pos
 
 
 def find_normalized_thickness(surfs, loc):
