@@ -24,7 +24,7 @@ def open_segyio_cube(filepath, iline=189, xline=193):
     return vel
 
 
-def create_welldata_matrix(folder: str) -> pd.DataFrame:
+def create_welldata_dataframe(folder: str) -> pd.DataFrame:
     """This function generates the data matrix for the wells
 
     Args:
@@ -86,12 +86,13 @@ def create_welldata_matrix(folder: str) -> pd.DataFrame:
     return pd.concat(well_data.values(), ignore_index=True)
 
 
-def create_wellposition_matrix(dataframe, time):
+def stacked_wells_matrix(pathf: str, sample: float):
     """
     Considere uma matriz com os poços empilhados um por linha contendo o mesmo tamanho e amostrado
     na mesma dimensão do modelo,
     ou seja: (nwells, nsamples)
     """
+    dataframe = create_welldata_dataframe(folder=pathf)
     log_well = np.zeros(shape=(16, 600))  # Hardcoded
     i = 0
     dataframe["IP_ups"] = dataframe["IP"]
@@ -101,10 +102,176 @@ def create_wellposition_matrix(dataframe, time):
             np.ones(30) / 30, dataframe[mask].IP, mode="same"
         )
         interpolator = interp1d(
-            dataframe[mask].TWT, dataframe[mask].IP_ups, bounds_error=False, fill_value='extrapolate'
+            dataframe[mask].TWT,
+            dataframe[mask].IP_ups,
+            bounds_error=False,
+            fill_value="extrapolate",
         )
-        log_well[i,:] = interpolator(time)
+        log_well[i, :] = interpolator(sample)
         i += 1
+
+    return log_well
+
+
+# def position_wells_matrix(dataframe: pd.DataFrame, well_positions: np.ndarray):
+#     well_names = np.array(dataframe.Well.unique())
+
+
+def read_horizon(path):
+    df = pd.read_csv(
+        path, sep=r"\s+", usecols=(2, 5, 8), names=["IL", "XL", "TWT"]
+    ).sort_values(by=["IL", "XL"])
+    return df
+
+
+def grid_surface_as_seismic(df, il=None, xl=None, method="linear"):
+    il_coords, xl_coords, t_val = df[["IL", "XL", "TWT"]].dropna().values.T
+    mask = ~np.isnan(il_coords) & ~np.isnan(xl_coords) & ~np.isnan(t_val)
+    il_coords, xl_coords, t_val = (
+        il_coords[mask],
+        xl_coords[mask],
+        t_val[mask],
+    )
+
+    if il is None:
+        il = np.arange(int(il_coords.min()), int(il_coords.max()) + 1)
+    if xl is None:
+        xl = np.arange(int(xl_coords.min()), int(xl_coords.max()) + 1)
+
+    il_grid, xl_grid = np.meshgrid(il, xl)
+    grid_points = np.column_stack((il_grid.ravel(), xl_grid.ravel()))
+    interpolated_grid = griddata(
+        (il_coords, xl_coords),
+        t_val,
+        grid_points,
+        method=method,
+        fill_value=np.mean(t_val),
+    ).reshape(il_grid.shape)
+
+    return interpolated_grid.T
+
+
+def load_and_grid(path, il=None, xl=None, method="linear"):
+    df = read_horizon(path)
+    grid = grid_surface_as_seismic(df, il, xl, method=method)
+    return grid
+
+
+def run_background_modelling(
+    horizons: np.ndarray,
+    log_well,
+    well_positions,
+    samples,
+    velocity_flat,
+    smooth_model=False,
+):
+    """
+    Runs background modeling pipeline for seismic inversion using horizons and well log data.
+    This function builds a relative geological time (RGT) model from input horizons,
+    performs kriging interpolation using well log data and velocity information, and
+    optionally applies smoothing to the resulting model.
+    Args:
+        horizons (np.ndarray): Array of horizon surfaces used to build the RGT model.
+        log_well: Well log data used as primary variable for interpolation.
+        well_positions: Spatial positions/coordinates of the wells relative to the model grid.
+        samples: Time samples used in RGT construction.
+        velocity_flat (np.ndarray): Flattened velocity model used as secondary variable
+            in co-kriging interpolation.
+        smooth_model (bool, optional): If True, applies smoothing to the final model
+            with a 50Hz cutoff. Defaults to False.
+    Returns:
+        BMTools: Configured BMTools object containing the built model accessible via
+            M.model[:,:,time_slice] for visualization and further processing.
+    Notes:
+        - The function uses a Gaussian variogram with anisotropic correlation lengths
+          (200, 100) and rotation angle of -π/8 (-22.5 degrees).
+        - Interpolation uses co-kriging with velocity as secondary variable and
+          decimation factor of 40.
+        - Fill values are set to (3000, 6000) for extrapolation outside data range.
+        - The resulting model can be visualized using time slices: M.model[:,:,slice_index].
+    """
+    M = BMTools()
+    M.build_rgt(surfaces=horizons, time=samples, silence=False)
+    model_shape = M.rgt.shape
+    # Here the model is already plottable with
+    # plt.imshow(M.rgt[813].T)
+
+    # Variogram
+    variogram = gs.Spherical(dim=2, len_scale=200, var=np.nanvar(log_well))
+    angle = -np.pi / 8  # (-22.5)
+    variogram = gs.Gaussian(
+        dim=2, len_scale=[200, 100], angles=angle, var=np.nanvar(log_well)
+    )
+
+    # Interpolation
+    # velocity_flat is the file np.load('Velocity_Model_Time_FLAT.npy')
+    M.interpol(
+        variogram,
+        log_well,
+        relative_well_loc=well_positions,
+        fill_value=(3000, 6000),
+        silence=False,
+        decimate=40,
+        second_var=velocity_flat,
+    )
+
+    """
+    mapa = np.zeros_like(hrz_base140_grid)
+    for i in range(hrz_base140_grid.shape[0]):
+        for j in range(hrz_base140_grid.shape[1]):
+            z = int((hrz_base140_grid[i, j] - 1700)//4)
+            #mapa[i, j] = M.krig[i,j,z]
+            mapa[i,j] = velocity[i,j,z]
+    """
+
+    if smooth_model == True:
+        M.smooth_model(cut_hz=50, silence=False)
+
+    """
+    The plotting happens using M.model[:,:,250] (TIME-SLICE)
+    """
+
+
+def convert_well_positions_to_seismic_grid(
+    positions: dict, xcoords, ycoords, il, xl, bin_half=6.5, scale=100
+):
+    """
+    This function will create the array of positions from the wells in inline and crossline
+
+    xcoords and ycoords are arrays that come from the seismic data
+    positions is a dictionary contatining the name of the well and the well head position X and Y
+    scale is the multiplication factor of specifically ABL, contains on SEGY
+     Half-bin tolerance for position matching. Default is 6.5.
+
+    """
+
+    mat = []
+    for pos in positions.values():
+        x, y = pos["X"], pos["Y"]
+
+        x_scaled = x / scale
+        y_scaled = y / scale
+
+        ix = np.where(
+            (xcoords / scale >= x - bin_half) & (xcoords / scale <= x + bin_half)
+        )[0][0]
+        iy = np.where(
+            (ycoords / scale >= y - bin_half) & (ycoords / scale <= y + bin_half)
+        )[0][0]
+
+        il_well = il[ix]
+        xl_well = xl[iy]
+
+        mat.append([il_well, xl_well])
+
+    return np.array(mat, dtype=int)
+
+
+def relative_well_position(positions, inline, xline):
+    relative_well_pos = positions.copy()
+    relative_well_pos[:, 0] = relative_well_pos[:, 0] - inline.min()
+    relative_well_pos[:, 1] = relative_well_pos[:, 1] - xline.min()
+    return relative_well_pos
 
 
 def find_normalized_thickness(surfs, loc):
