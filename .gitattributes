@@ -1,9 +1,3 @@
-# Exclude lasso and las files from Git operations
-*.lasso binary
-*.lasso export-ignore
-*.las binary
-*.las export-ignore
-
 # Exclude only .las and .lasso files from language statistics
 *.las linguist-vendored
 *.lasso linguist-vendored
