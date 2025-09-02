@@ -7,3 +7,4 @@
 # Exclude only .las and .lasso files from language statistics
 *.las linguist-vendored
 *.lasso linguist-vendored
+*.ipynb linguist-vendored
