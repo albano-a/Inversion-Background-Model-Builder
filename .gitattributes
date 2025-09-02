@@ -4,7 +4,6 @@
 *.las binary
 *.las export-ignore
 
-# Only track Python files for language statistics
-* linguist-vendored
-*.py linguist-vendored=false
-*.py linguist-detectable=true
+# Exclude only .las and .lasso files from language statistics
+*.las linguist-vendored
+*.lasso linguist-vendored
